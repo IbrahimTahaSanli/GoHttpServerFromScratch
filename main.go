@@ -136,9 +136,11 @@ func handleConn(conn net.Conn) {
 		arr := strings.Split(req, "\r\n")
 
 		requset.request = CheckRequest(arr[0])
+
 		if requset.request < 0 {
 			fmt.Printf("Invalid Request.(%s)", req)
 		}
+
 		requset.requestData = strings.Split(arr[0], " ")[1]
 
 		requset.accepts = []string{}
@@ -202,20 +204,20 @@ func handleConn(conn net.Conn) {
 		break
 	case 1:
 		break
-
 	}
 
 }
 
 func RequestGet(conn net.Conn, req Request) error {
-	fmt.Printf("%s\t%s\t%s\n", req.refer, req.requestData, req.host)
 	if req.requestData[len(req.requestData)-1] == '/' {
 		req.requestData += "index.html"
 	}
-	req.requestData = ConCatPath(req.refer, req.requestData, string(OsSep(runtime.GOOS)))
+	if req.requestData[len(req.requestData)-5:] != ".html" {
+		req.requestData = ConCatPath(req.refer, req.requestData, string(OsSep(runtime.GOOS)))
+	}
 	req.requestData = ConvertPath(req.requestData, runtime.GOOS)
 	file, err := os.Open(ConCatPath(ROOTLOC, req.requestData, string(OsSep(runtime.GOOS))))
-	fmt.Printf("%s\t%s\n", req.requestData, ConCatPath(ROOTLOC, req.requestData, string(OsSep(runtime.GOOS))))
+
 	if err != nil {
 		fmt.Printf("Can't Read File.(%s)", req.requestData)
 		return err
@@ -233,8 +235,6 @@ func RequestGet(conn net.Conn, req Request) error {
 	if req.requestData[len(req.requestData)-1] == '\\' {
 		req.requestData += "index.html"
 	}
-
-	fmt.Printf("\n1%s\n", ConCatPath(ROOTLOC, req.requestData, string(OsSep(runtime.GOOS))))
 
 	file, err = os.Open(ConCatPath(ROOTLOC, req.requestData, string(OsSep(runtime.GOOS))))
 
@@ -254,7 +254,7 @@ func RequestGet(conn net.Conn, req Request) error {
 	stype := req.requestData[strings.LastIndex(req.requestData, ".")+1:]
 
 	i := filestat.Size()
-	conn.Write([]byte(fmt.Sprintf("HTTP/1.1 200 OK\r\nServer: SimpleGoServerByTahaSanli\r\nDate: Thu, 25 Feb 2021 17:51:27 GMT\r\nContent-type: text/%s; charset=UTF-8\r\nContent-Length: %v\r\n\r\n", stype, i)))
+	conn.Write([]byte(fmt.Sprintf("HTTP/1.1 200 OK\r\nConnection: closed\r\nServer: SimpleGoServerByTahaSanli\r\nDate: Thu, 25 Feb 2021 17:51:27 GMT\r\nContent-type: text/%s; charset=UTF-8\r\nContent-Length: %v\r\n\r\n", stype, i)))
 	j := i % int64(FILEBUFFER)
 	i = int64(i / int64(FILEBUFFER))
 
@@ -271,7 +271,6 @@ func RequestGet(conn net.Conn, req Request) error {
 	conn.Write(b1)
 	conn.Write([]byte("\r\n\r\n"))
 
-	conn.Close()
 	return err
 
 }
