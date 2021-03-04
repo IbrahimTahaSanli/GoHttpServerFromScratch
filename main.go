@@ -9,6 +9,12 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+
+	"time"
+
+	"database/sql"
+
+	_ "github.com/mattn/go-sqlite3"
 )
 
 const (
@@ -24,6 +30,7 @@ var IP string
 var PORT string
 var HOST string = "http://"
 var ROOTLOC string
+var DB *sql.DB
 
 type Request struct {
 	request     int
@@ -83,6 +90,18 @@ func main() {
 	}
 
 	fmt.Printf("Serve Location: %s", RootLoc)
+
+	if _, err := os.Stat("..\\sqlite-databse.db"); err != nil {
+
+	} else if os.IsNotExist(err) {
+		return
+	}
+
+	DB, err = sql.Open("sqlite3", "..\\sqlite-database.db")
+
+	if err != nil {
+		return
+	}
 
 	for {
 		conn, err := sock.Accept()
@@ -271,6 +290,8 @@ func RequestGet(conn net.Conn, req Request) error {
 	conn.Write(b1)
 	conn.Write([]byte("\r\n\r\n"))
 
+	InsertToREQUESTS(req)
+
 	return err
 
 }
@@ -314,6 +335,34 @@ func isIp(str string) int {
 	}
 
 	return 0
+}
+
+func InsertToREQUESTS(req Request) error {
+	row, err := DB.Query("SELECT ID FROM HOSTS WHERE IP=? AND PORT=?;", req.host, "0")
+	var stm *sql.Stmt
+	if err != nil {
+
+		return err
+	}
+	if !row.Next() {
+		stm, err = DB.Prepare("INSERT INTO HOSTS(IP,PORT) VALUES (?,?)")
+		stm.Exec(req.host, "0")
+
+		row, err = DB.Query("SELECT ID FROM HOSTS WHERE IP=? AND PORT=?;", req.host, "0")
+	}
+
+	var id int = -1
+
+	row.Scan(&id)
+
+	row.Close()
+
+	ti := time.Now()
+
+	stm, err = DB.Prepare("INSERT INTO REQUESTS (TYPE, DATA, HOST, ACCEPTS, CONNECTION, USERAGENT, DATE ) VALUES (?,?,?,?,?,?,?)")
+	_, err = stm.Exec(req.request, req.requestData, id, strings.Join(req.accepts, ", "), req.connection, req.useragent, ti.Format("2006-01-02 15:04:05.000000000"))
+
+	return err
 }
 
 //***************************************************
