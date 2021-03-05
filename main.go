@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -18,11 +19,7 @@ import (
 )
 
 const (
-	GET        string = "GET"
-	POST       string = "POST"
-	PUT        string = "PUT"
-	DELETE     string = "DELETE"
-	FILEBUFFER int    = 4096
+	FILEBUFFER int = 4096
 )
 
 var ReqArr []string = []string{"GET", "POST", "PUT", "DELETE"}
@@ -77,8 +74,7 @@ func main() {
 	sock, err := net.Listen("tcp", IP+":"+PORT)
 
 	if err != nil {
-		fmt.Printf("Socket Couldn't Initilaize.(%s)", err)
-		return
+		HandleErr(errors.New("SockListen!" + err.Error()))
 	}
 
 	RootLoc, err := os.Getwd()
@@ -90,24 +86,21 @@ func main() {
 	}
 
 	fmt.Printf("Serve Location: %s", RootLoc)
-
-	if _, err := os.Stat("..\\sqlite-databse.db"); err != nil {
-
-	} else if os.IsNotExist(err) {
-		return
+	fmt.Printf("\n%s", RootLoc[:strings.LastIndex(RootLoc, "\\")]+"\\..\\sqlite-databse.db")
+	if _, err := os.Stat(RootLoc[:strings.LastIndex(RootLoc, "\\")] + "\\sqlite-database.db"); os.IsNotExist(err) {
+		HandleErr(errors.New("DatabaseRead!" + err.Error()))
 	}
 
 	DB, err = sql.Open("sqlite3", "..\\sqlite-database.db")
 
 	if err != nil {
-		return
+		HandleErr(errors.New("DatabaseRead!" + err.Error()))
 	}
 
 	for {
 		conn, err := sock.Accept()
 		if err != nil {
-			fmt.Printf("Couldn't Accept.(%s)", err)
-			return
+			HandleErr(errors.New("SockAccept!" + err.Error()))
 		}
 
 		go handleConn(conn)
@@ -135,7 +128,7 @@ func listenConn(conn net.Conn) (string, error) {
 		}
 		if err != nil {
 			conn.Close()
-			fmt.Printf("Reader Error.(%s)", err)
+			HandleErr(errors.New("SockListen!" + err.Error()))
 			return str, err
 		}
 
@@ -157,7 +150,9 @@ func handleConn(conn net.Conn) {
 		requset.request = CheckRequest(arr[0])
 
 		if requset.request < 0 {
-			fmt.Printf("Invalid Request.(%s)", req)
+			HandleErr(errors.New("InvalidRequest!" + err.Error()))
+			conn.Close()
+			return
 		}
 
 		requset.requestData = strings.Split(arr[0], " ")[1]
@@ -166,12 +161,9 @@ func handleConn(conn net.Conn) {
 		requset.otherReq = []string{}
 
 		for i := 1; i < len(arr); i++ {
-			if arr[i] == "" || arr[i] == " " {
-				continue
-			}
 			oz := strings.Split(arr[i], ":")
-			if len(oz) == 0 {
-				fmt.Printf("Invalid Request.(%s)", arr[i])
+			if requset.request < 0 {
+				HandleErr(errors.New("InvalidRequest!" + err.Error()))
 				conn.Close()
 				return
 			}
@@ -212,7 +204,7 @@ func handleConn(conn net.Conn) {
 		}
 
 	} else {
-		fmt.Printf("Error Ocured While Listening.(%s)", err)
+		HandleErr(errors.New("Listening!" + err.Error()))
 		conn.Close()
 		return
 	}
@@ -231,20 +223,22 @@ func RequestGet(conn net.Conn, req Request) error {
 	if req.requestData[len(req.requestData)-1] == '/' {
 		req.requestData += "index.html"
 	}
+
 	if req.requestData[len(req.requestData)-5:] != ".html" {
 		req.requestData = ConCatPath(req.refer, req.requestData, string(OsSep(runtime.GOOS)))
 	}
+
 	req.requestData = ConvertPath(req.requestData, runtime.GOOS)
 	file, err := os.Open(ConCatPath(ROOTLOC, req.requestData, string(OsSep(runtime.GOOS))))
 
 	if err != nil {
-		fmt.Printf("Can't Read File.(%s)", req.requestData)
+		HandleErr(errors.New("FileRead!" + err.Error()))
 		return err
 	}
 
 	filestat, err := file.Stat()
 	if err != nil {
-		fmt.Printf("Can't Read FileStat.(%s)", req.requestData)
+		HandleErr(errors.New("FileStat!" + err.Error()))
 		return err
 	}
 
@@ -258,13 +252,13 @@ func RequestGet(conn net.Conn, req Request) error {
 	file, err = os.Open(ConCatPath(ROOTLOC, req.requestData, string(OsSep(runtime.GOOS))))
 
 	if err != nil {
-		fmt.Printf("Can't Read File After.(%s)", req.requestData)
+		HandleErr(errors.New("FileRead!" + err.Error()))
 		return err
 	}
 
 	filestat, err = file.Stat()
 	if err != nil {
-		fmt.Printf("Can't Read FileStat.(%s)", req.requestData)
+		HandleErr(errors.New("FileStat!" + err.Error()))
 		return err
 	}
 
@@ -273,7 +267,17 @@ func RequestGet(conn net.Conn, req Request) error {
 	stype := req.requestData[strings.LastIndex(req.requestData, ".")+1:]
 
 	i := filestat.Size()
-	conn.Write([]byte(fmt.Sprintf("HTTP/1.1 200 OK\r\nConnection: closed\r\nServer: SimpleGoServerByTahaSanli\r\nDate: Thu, 25 Feb 2021 17:51:27 GMT\r\nContent-type: text/%s; charset=UTF-8\r\nContent-Length: %v\r\n\r\n", stype, i)))
+
+	res, err := DB.Query("SELECT RESPONSE FROM RESPONSE WHERE CODE = 200;")
+	var response string = ""
+	res.Next()
+	res.Scan(&response)
+
+	response = strings.Replace(response, "{0}", time.Now().Format(time.RFC1123), 1)
+	response = strings.Replace(response, "{1}", "text/"+stype, 1)
+	response = strings.Replace(response, "{2}", strconv.FormatInt(i, 10), 1)
+	fmt.Printf("\n%s\n", response)
+	conn.Write([]byte(response))
 	j := i % int64(FILEBUFFER)
 	i = int64(i / int64(FILEBUFFER))
 
@@ -289,6 +293,7 @@ func RequestGet(conn net.Conn, req Request) error {
 	file.Close()
 	conn.Write(b1)
 	conn.Write([]byte("\r\n\r\n"))
+	conn.Close()
 
 	InsertToREQUESTS(req)
 
@@ -340,15 +345,25 @@ func isIp(str string) int {
 func InsertToREQUESTS(req Request) error {
 	row, err := DB.Query("SELECT ID FROM HOSTS WHERE IP=? AND PORT=?;", req.host, "0")
 	var stm *sql.Stmt
-	if err != nil {
 
+	if err != nil {
+		HandleErr(errors.New("SQLSelect!" + err.Error()))
 		return err
 	}
+
 	if !row.Next() {
 		stm, err = DB.Prepare("INSERT INTO HOSTS(IP,PORT) VALUES (?,?)")
+		if err != nil {
+			HandleErr(errors.New("SQLPrepare!" + err.Error()))
+			return err
+		}
 		stm.Exec(req.host, "0")
 
 		row, err = DB.Query("SELECT ID FROM HOSTS WHERE IP=? AND PORT=?;", req.host, "0")
+		if err != nil {
+			HandleErr(errors.New("SQLSelect!" + err.Error()))
+			return err
+		}
 	}
 
 	var id int = -1
@@ -360,9 +375,43 @@ func InsertToREQUESTS(req Request) error {
 	ti := time.Now()
 
 	stm, err = DB.Prepare("INSERT INTO REQUESTS (TYPE, DATA, HOST, ACCEPTS, CONNECTION, USERAGENT, DATE ) VALUES (?,?,?,?,?,?,?)")
+	if err != nil {
+		HandleErr(errors.New("SQLPrepare!" + err.Error()))
+		return err
+	}
+
 	_, err = stm.Exec(req.request, req.requestData, id, strings.Join(req.accepts, ", "), req.connection, req.useragent, ti.Format("2006-01-02 15:04:05.000000000"))
+	if err != nil {
+		HandleErr(errors.New("SQLInsert!" + err.Error()))
+		return err
+	}
 
 	return err
+}
+
+func HandleErr(err error) {
+	switch strings.Split(err.Error(), "!")[0] {
+	case "SockListen":
+		break
+	case "SockAccept":
+		break
+	case "DatabaseRead":
+		break
+	case "InvalidRequest":
+		break
+	case "Listening":
+		break
+	case "FileRead":
+		break
+	case "FileStat":
+		break
+	case "SQLSelect":
+		break
+	case "SQLPrepare":
+		break
+	default:
+		break
+	}
 }
 
 //***************************************************
