@@ -23,10 +23,15 @@ const (
 )
 
 var ReqArr []string = []string{"GET", "POST", "PUT", "DELETE"}
+
 var IP string
 var PORT string
+
 var HOST string = "http://"
+
 var ROOTLOC string
+var NOTFOUNDLOC string
+
 var DB *sql.DB
 
 type Request struct {
@@ -85,13 +90,16 @@ func main() {
 		ROOTLOC = RootLoc + "/"
 	}
 
-	fmt.Printf("Serve Location: %s", RootLoc)
-	fmt.Printf("\n%s", RootLoc[:strings.LastIndex(RootLoc, "\\")]+"\\..\\sqlite-databse.db")
+	fmt.Printf("Serve Location: %s\n", RootLoc)
+	NOTFOUNDLOC = ROOTLOC + "404\\"
+
 	if _, err := os.Stat(RootLoc[:strings.LastIndex(RootLoc, "\\")] + "\\sqlite-database.db"); os.IsNotExist(err) {
 		HandleErr(errors.New("DatabaseRead!" + err.Error()))
 	}
 
 	DB, err = sql.Open("sqlite3", "..\\sqlite-database.db")
+
+	fmt.Printf("Database Location: %s\n", RootLoc[:strings.LastIndex(RootLoc, "\\")]+"\\sqlite-database.db")
 
 	if err != nil {
 		HandleErr(errors.New("DatabaseRead!" + err.Error()))
@@ -144,7 +152,7 @@ func handleConn(conn net.Conn) {
 
 	var requset Request
 	if err == io.EOF {
-		fmt.Printf(req)
+
 		arr := strings.Split(req, "\r\n")
 
 		requset.request = CheckRequest(arr[0])
@@ -179,7 +187,6 @@ func handleConn(conn net.Conn) {
 					fmt.Println("2")
 					requset.host = "http:\\\\" + oz2[1:]
 				}
-				fmt.Printf("\n2%s\n", requset.host)
 
 			case "CONNECTION":
 				requset.connection = strings.Split(arr[i], ":")[1]
@@ -189,15 +196,10 @@ func handleConn(conn net.Conn) {
 				requset.useragent = strings.Split(arr[i], ":")[1]
 			case "REFERER":
 				requset.refer = strings.Join(strings.Split(arr[i], ":")[1:], "")[1:]
-				fmt.Printf("6%s\n", strings.Split(arr[i], ":"))
 
 				requset.refer = requset.refer[strings.Index(requset.refer[7:], "/")+7:]
-				fmt.Printf("9%s\n", requset.refer)
-
 			}
 		}
-
-		fmt.Printf("3%s\n", requset.refer)
 
 		if requset.refer == "" {
 			requset.refer += "\\"
@@ -208,6 +210,8 @@ func handleConn(conn net.Conn) {
 		conn.Close()
 		return
 	}
+
+	fmt.Printf("Request: %s %s\n", ReqArr[requset.request], requset.requestData)
 
 	switch requset.request {
 	case 0:
@@ -220,6 +224,10 @@ func handleConn(conn net.Conn) {
 }
 
 func RequestGet(conn net.Conn, req Request) error {
+	var response string = ""
+	var path string = ""
+	var code int = 200
+
 	if req.requestData[len(req.requestData)-1] == '/' {
 		req.requestData += "index.html"
 	}
@@ -229,17 +237,18 @@ func RequestGet(conn net.Conn, req Request) error {
 	}
 
 	req.requestData = ConvertPath(req.requestData, runtime.GOOS)
-	file, err := os.Open(ConCatPath(ROOTLOC, req.requestData, string(OsSep(runtime.GOOS))))
+	path = ConCatPath(ROOTLOC, req.requestData, string(OsSep(runtime.GOOS)))
 
+	filestat, err := os.Stat(path)
 	if err != nil {
-		HandleErr(errors.New("FileRead!" + err.Error()))
-		return err
-	}
+		code = 404
+		path = NOTFOUNDLOC + "index.html"
 
-	filestat, err := file.Stat()
-	if err != nil {
-		HandleErr(errors.New("FileStat!" + err.Error()))
-		return err
+		filestat, err = os.Stat(path)
+
+		if err != nil {
+			HandleErr(errors.New("FileStat!" + err.Error()))
+		}
 	}
 
 	if filestat.IsDir() && req.requestData != "\\" {
@@ -249,56 +258,75 @@ func RequestGet(conn net.Conn, req Request) error {
 		req.requestData += "index.html"
 	}
 
-	file, err = os.Open(ConCatPath(ROOTLOC, req.requestData, string(OsSep(runtime.GOOS))))
+	path = ConCatPath(ROOTLOC, req.requestData, string(OsSep(runtime.GOOS)))
 
+	filestat, err = os.Stat(path)
 	if err != nil {
-		HandleErr(errors.New("FileRead!" + err.Error()))
-		return err
+		code = 404
+		path = NOTFOUNDLOC + "index.html"
+
+		filestat, err = os.Stat(path)
+		if err != nil {
+			HandleErr(errors.New("FileStat!" + err.Error()))
+			return err
+		}
 	}
 
-	filestat, err = file.Stat()
-	if err != nil {
-		HandleErr(errors.New("FileStat!" + err.Error()))
-		return err
-	}
-
-	b1 := make([]byte, FILEBUFFER)
-
-	stype := req.requestData[strings.LastIndex(req.requestData, ".")+1:]
+	stype := path[strings.LastIndex(path, ".")+1:]
 
 	i := filestat.Size()
 
-	res, err := DB.Query("SELECT RESPONSE FROM RESPONSE WHERE CODE = 200;")
-	var response string = ""
+	res, err := DB.Query("SELECT RESPONSE FROM RESPONSE WHERE CODE = ?;", code)
 	res.Next()
 	res.Scan(&response)
+	res.Close()
 
+	response = strings.ReplaceAll(response, "\\r\\n", "\r\n")
 	response = strings.Replace(response, "{0}", time.Now().Format(time.RFC1123), 1)
 	response = strings.Replace(response, "{1}", "text/"+stype, 1)
 	response = strings.Replace(response, "{2}", strconv.FormatInt(i, 10), 1)
-	fmt.Printf("\n%s\n", response)
+
 	conn.Write([]byte(response))
-	j := i % int64(FILEBUFFER)
-	i = int64(i / int64(FILEBUFFER))
 
-	for k := int64(0); k < i; k++ {
-		file.Read(b1)
-		conn.Write(b1)
-	}
+	WriteFileToConn(conn, path)
 
-	b1 = make([]byte, j)
-
-	file.Read(b1)
-
-	file.Close()
-	conn.Write(b1)
 	conn.Write([]byte("\r\n\r\n"))
 	conn.Close()
 
 	InsertToREQUESTS(req)
 
 	return err
+}
 
+func WriteFileToConn(conn net.Conn, path string) error {
+	file, err := os.Open(path)
+	if err != nil {
+		HandleErr(errors.New("FileRead!" + err.Error()))
+		return err
+	}
+
+	stat, err := file.Stat()
+	if err != nil {
+		HandleErr(errors.New("FileStat!" + err.Error()))
+		return err
+	}
+
+	i := int(stat.Size())
+	b1 := make([]byte, FILEBUFFER)
+
+	for ; i > FILEBUFFER; i -= FILEBUFFER {
+		file.Read(b1)
+		conn.Write(b1)
+	}
+
+	b1 = make([]byte, i)
+
+	file.Read(b1)
+	file.Close()
+
+	conn.Write(b1)
+
+	return err
 }
 
 func CheckRequest(str string) int {
