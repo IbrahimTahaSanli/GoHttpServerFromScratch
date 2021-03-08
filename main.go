@@ -158,6 +158,7 @@ func handleConn(conn net.Conn) {
 		requset.request = CheckRequest(arr[0])
 
 		if requset.request < 0 {
+			WriteResponseHeader(conn, 400)
 			HandleErr(errors.New("InvalidRequest!" + err.Error()))
 			conn.Close()
 			return
@@ -171,6 +172,7 @@ func handleConn(conn net.Conn) {
 		for i := 1; i < len(arr); i++ {
 			oz := strings.Split(arr[i], ":")
 			if requset.request < 0 {
+				WriteResponseHeader(conn, 400)
 				HandleErr(errors.New("InvalidRequest!" + err.Error()))
 				conn.Close()
 				return
@@ -197,7 +199,19 @@ func handleConn(conn net.Conn) {
 			case "REFERER":
 				requset.refer = strings.Join(strings.Split(arr[i], ":")[1:], "")[1:]
 
-				requset.refer = requset.refer[strings.Index(requset.refer[7:], "/")+7:]
+				requset.refer = requset.refer[strings.Index(requset.refer[7:], "/")+8:]
+				fileStat, _ := os.Stat(ConCatPath(ROOTLOC, requset.refer, string(OsSep(runtime.GOOS))))
+				if fileStat.IsDir() {
+					requset.refer += "\\"
+				} else {
+					tmp := strings.LastIndex(requset.refer, "\\")
+					if tmp == -1 {
+						requset.refer = ""
+						continue
+					}
+					requset.refer = requset.refer[:strings.LastIndex(requset.refer, "\\")]
+				}
+
 			}
 		}
 
@@ -224,15 +238,18 @@ func handleConn(conn net.Conn) {
 }
 
 func RequestGet(conn net.Conn, req Request) error {
-	var response string = ""
 	var path string = ""
 	var code int = 200
+	var isHTML bool = false
 
-	if req.requestData[len(req.requestData)-1] == '/' {
-		req.requestData += "index.html"
+	for _, elem := range req.accepts {
+		if strings.Index(elem, "html") >= 0 {
+			isHTML = true
+			break
+		}
 	}
 
-	if req.requestData[len(req.requestData)-5:] != ".html" {
+	if !isHTML {
 		req.requestData = ConCatPath(req.refer, req.requestData, string(OsSep(runtime.GOOS)))
 	}
 
@@ -251,14 +268,13 @@ func RequestGet(conn net.Conn, req Request) error {
 		}
 	}
 
-	if filestat.IsDir() && req.requestData != "\\" {
-		req.requestData += "\\"
-	}
-	if req.requestData[len(req.requestData)-1] == '\\' {
-		req.requestData += "index.html"
-	}
+	if filestat.IsDir() {
+		if path[len(path)-1] != '\\' {
+			path += "\\"
+		}
 
-	path = ConCatPath(ROOTLOC, req.requestData, string(OsSep(runtime.GOOS)))
+		path += "index.html"
+	}
 
 	filestat, err = os.Stat(path)
 	if err != nil {
@@ -266,27 +282,17 @@ func RequestGet(conn net.Conn, req Request) error {
 		path = NOTFOUNDLOC + "index.html"
 
 		filestat, err = os.Stat(path)
+
 		if err != nil {
 			HandleErr(errors.New("FileStat!" + err.Error()))
-			return err
 		}
 	}
 
-	stype := path[strings.LastIndex(path, ".")+1:]
+	fileType := path[strings.LastIndex(path, ".")+1:]
 
-	i := filestat.Size()
+	contentSize := filestat.Size()
 
-	res, err := DB.Query("SELECT RESPONSE FROM RESPONSE WHERE CODE = ?;", code)
-	res.Next()
-	res.Scan(&response)
-	res.Close()
-
-	response = strings.ReplaceAll(response, "\\r\\n", "\r\n")
-	response = strings.Replace(response, "{0}", time.Now().Format(time.RFC1123), 1)
-	response = strings.Replace(response, "{1}", "text/"+stype, 1)
-	response = strings.Replace(response, "{2}", strconv.FormatInt(i, 10), 1)
-
-	conn.Write([]byte(response))
+	WriteResponseHeader(conn, code, "text/"+fileType, strconv.FormatInt(contentSize, 10))
 
 	WriteFileToConn(conn, path)
 
@@ -327,6 +333,38 @@ func WriteFileToConn(conn net.Conn, path string) error {
 	conn.Write(b1)
 
 	return err
+}
+
+func WriteResponseHeader(conn net.Conn, code int, headers ...interface{}) {
+	var response string
+	var i int
+
+	res, err := DB.Query("SELECT RESPONSE, Param FROM RESPONSE WHERE CODE = ?;", code)
+
+	if err != nil {
+		panic(1)
+	}
+
+	res.Next()
+	res.Scan(&response, &i)
+	res.Close()
+
+	if i != 0 {
+		if i != len(headers) {
+			HandleErr(errors.New("UnEqualParams!"))
+			return
+		}
+	}
+
+	response = strings.ReplaceAll(response, "\\r\\n", "\r\n")
+
+	for ; i > 0; i-- {
+		response = strings.Replace(response, "{"+strconv.FormatInt(int64(i), 10)+"}", headers[i-1].(string), 1)
+	}
+
+	response = strings.Replace(response, "{0}", time.Now().Format(time.RFC1123), 1)
+
+	conn.Write([]byte(response))
 }
 
 func CheckRequest(str string) int {
@@ -437,6 +475,8 @@ func HandleErr(err error) {
 		break
 	case "SQLPrepare":
 		break
+	case "UnEqualParams":
+		break
 	default:
 		break
 	}
@@ -457,6 +497,13 @@ func ConvertPath(path string, toOs string) string {
 }
 
 func ConCatPath(path1 string, path2 string, sep string) string {
+	if len(path1) == 0 {
+		return path2
+	}
+	if len(path2) == 0 {
+		return path1
+	}
+
 	if path1[len(path1)-1] == '\\' || path1[len(path1)-1] == '/' {
 		if path2[0] == '\\' || path2[0] == '/' {
 			return path1[:len(path1)-1] + path2 //[1:]Dont Use
