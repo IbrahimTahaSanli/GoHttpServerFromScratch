@@ -1,0 +1,4 @@
+GET / HTTP/1.1 \r\n referer: /index.html\r\n\r\n		Crash Fixed! => Code:400
+GET / HTTP/1.1\rreferer: /index.html\r\n\r\n			Crash Fixed! => Code:400
+GET / HTTP/1.1\rreferer:/index.html\r\n\r\n			Crash Fixed! => Code:400
+GET /HTTP/1.1\r\nAccepts: text/html\r\n\r\n			Crash Fixed! => Code:400
