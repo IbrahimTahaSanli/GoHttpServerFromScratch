@@ -120,7 +120,6 @@ func listenConn(conn net.Conn) (string, error) {
 
 	reader := bufio.NewReader(conn)
 	str := ""
-	//ar req Request
 
 	for {
 		data, err := reader.ReadByte()
@@ -171,12 +170,6 @@ func handleConn(conn net.Conn) {
 
 		for i := 1; i < len(arr); i++ {
 			oz := strings.Split(arr[i], ":")
-			if requset.request < 0 {
-				WriteResponseHeader(conn, 400)
-				HandleErr(errors.New("InvalidRequest!" + err.Error()))
-				conn.Close()
-				return
-			}
 
 			oz1 := strings.ToUpper(oz[0])
 			switch oz1 {
@@ -200,7 +193,13 @@ func handleConn(conn net.Conn) {
 				requset.refer = strings.Join(strings.Split(arr[i], ":")[1:], "")[1:]
 
 				requset.refer = requset.refer[strings.Index(requset.refer[7:], "/")+8:]
-				fileStat, _ := os.Stat(ConCatPath(ROOTLOC, requset.refer, string(OsSep(runtime.GOOS))))
+				fileStat, err := os.Stat(ConCatPath(ROOTLOC, requset.refer, string(OsSep(runtime.GOOS))))
+				if err != nil {
+					WriteResponseHeader(conn, 400)
+					HandleErr(errors.New("InvalidRequest!" + err.Error()))
+					conn.Close()
+					return
+				}
 				if fileStat.IsDir() {
 					requset.refer += "\\"
 				} else {
@@ -372,10 +371,16 @@ func CheckRequest(str string) int {
 	if index == -1 {
 		return -1
 	}
+	if strings.Count(str, " ") != 2 {
+		return -2
+	}
+	if strings.Split(str, " ")[2] != "HTTP/1.1\r" {
+		return -3
+	}
 
 	slicedStr := str[:index]
 	if len(slicedStr) > 4 || len(slicedStr) < 0 {
-		return -2
+		return -4
 	}
 
 	for i := 0; i < len(ReqArr); i++ {
