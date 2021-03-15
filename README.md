@@ -12,3 +12,7 @@ To-Do:
   - Need To Work On Safety.
   - Error Handling.
   - Comments.
+  - Some Crashes
+
+Test-Cases:
+  I Added test-cases.txt File. It Stores Test Cases In Patern Request\tWhat Has Been Ocured => What Is Doing Now. If You Find Any Crashs, Security Holes Or Something Wrong I Would Be Happy To Fix It.
